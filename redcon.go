@@ -115,7 +115,7 @@ type Conn interface {
 
 // NewServer returns a new Redcon server configured on "tcp" network net.
 func NewServer(addr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 ) *Server {
@@ -124,7 +124,7 @@ func NewServer(addr string,
 
 // NewServerTLS returns a new Redcon TLS server configured on "tcp" network net.
 func NewServerTLS(addr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 	config *tls.Config,
@@ -136,7 +136,7 @@ func NewServerTLS(addr string,
 // a stream-oriented network: "tcp", "tcp4", "tcp6", "unix" or "unixpacket"
 func NewServerNetwork(
 	net, laddr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 ) *Server {
@@ -158,7 +158,7 @@ func NewServerNetwork(
 // a stream-oriented network: "tcp", "tcp4", "tcp6", "unix" or "unixpacket"
 func NewServerNetworkTLS(
 	net, laddr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 	config *tls.Config,
@@ -223,7 +223,7 @@ func (s *TLSServer) ListenAndServe() error {
 
 // Serve creates a new server and serves with the given net.Listener.
 func Serve(ln net.Listener,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 ) error {
@@ -242,7 +242,7 @@ func Serve(ln net.Listener,
 
 // ListenAndServe creates a new server and binds to addr configured on "tcp" network net.
 func ListenAndServe(addr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 ) error {
@@ -251,7 +251,7 @@ func ListenAndServe(addr string,
 
 // ListenAndServeTLS creates a new TLS server and binds to addr configured on "tcp" network net.
 func ListenAndServeTLS(addr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 	config *tls.Config,
@@ -263,7 +263,7 @@ func ListenAndServeTLS(addr string,
 // a stream-oriented network: "tcp", "tcp4", "tcp6", "unix" or "unixpacket"
 func ListenAndServeNetwork(
 	net, laddr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 ) error {
@@ -274,7 +274,7 @@ func ListenAndServeNetwork(
 // a stream-oriented network: "tcp", "tcp4", "tcp6", "unix" or "unixpacket"
 func ListenAndServeNetworkTLS(
 	net, laddr string,
-	handler func(conn Conn, cmd Command),
+	handler func(conn Conn, cmds []Command),
 	accept func(conn Conn) bool,
 	closed func(conn Conn, err error),
 	config *tls.Config,
@@ -410,15 +410,8 @@ func handle(s *Server, c *conn) {
 				}
 				return err
 			}
-			c.cmds = cmds
-			for len(c.cmds) > 0 {
-				cmd := c.cmds[0]
-				if len(c.cmds) == 1 {
-					c.cmds = nil
-				} else {
-					c.cmds = c.cmds[1:]
-				}
-				s.handler(c, cmd)
+			if len(cmds) > 0 {
+				s.handler(c, cmds)
 			}
 			if c.detached {
 				// client has been detached
@@ -550,7 +543,7 @@ type Server struct {
 	mu        sync.Mutex
 	net       string
 	laddr     string
-	handler   func(conn Conn, cmd Command)
+	handler   func(conn Conn, cmds []Command)
 	accept    func(conn Conn) bool
 	closed    func(conn Conn, err error)
 	conns     map[*conn]bool
