@@ -38,7 +38,7 @@ type Conn interface {
 	// RemoteAddr returns the remote address of the client connection.
 	RemoteAddr() string
 	// Close closes the connection.
-	Close() error
+	Close(force bool) (bool, error)
 	// WriteError writes an error to the client.
 	WriteError(msg string)
 	// WriteString writes a string to the client.
@@ -194,6 +194,12 @@ func (s *Server) Close() error {
 	return s.ln.Close()
 }
 
+func (s *Server) IsServerClosing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done
+}
+
 // ListenAndServe serves incoming connections.
 func (s *Server) ListenAndServe() error {
 	return s.ListenServeAndSignal(nil)
@@ -214,6 +220,12 @@ func (s *TLSServer) Close() error {
 	}
 	s.done = true
 	return s.ln.Close()
+}
+
+func (s *TLSServer) IsServerClosing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done
 }
 
 // ListenAndServe serves incoming connections.
@@ -331,9 +343,15 @@ func serve(s *Server) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			for c := range s.conns {
-				c.Close()
+				closed, err := c.Close(false)
+				if err != nil {
+					fmt.Printf("close connection error %+v, %s\n", c, err)
+					continue
+				}
+				if closed {
+					delete(s.conns, c)
+				}
 			}
-			s.conns = nil
 		}()
 	}()
 	for {
@@ -364,7 +382,7 @@ func serve(s *Server) error {
 			s.mu.Lock()
 			delete(s.conns, c)
 			s.mu.Unlock()
-			c.Close()
+			c.Close(true)
 			continue
 		}
 		go handle(s, c)
@@ -375,20 +393,30 @@ func serve(s *Server) error {
 func handle(s *Server, c *conn) {
 	var err error
 	defer func() {
-		if err != errDetached {
-			// do not close the connection when a detach is detected.
-			c.conn.Close()
-		}
+		// if err != errDetached {
+		// 	// do not close the connection when a detach is detected.
+		// 	c.conn.Close()
+		// }
 		func() {
 			// remove the conn from the server
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			delete(s.conns, c)
-			if s.closed != nil {
-				if err == io.EOF {
-					err = nil
+			if err != nil {
+				fmt.Printf("handle connection error %+v %s\n", c, err)
+			}
+			closed, closeErr := c.Close(false)
+			if closeErr != nil {
+				fmt.Printf("close connection error %+v %s\n", c, err)
+				return
+			}
+			if closed {
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				delete(s.conns, c)
+				if s.closed != nil {
+					if err == io.EOF {
+						err = nil
+					}
+					s.closed(c, err)
 				}
-				s.closed(c, err)
 			}
 		}()
 	}()
@@ -423,6 +451,9 @@ func handle(s *Server, c *conn) {
 			if err := c.wr.Flush(); err != nil {
 				return err
 			}
+			if s.IsServerClosing() {
+				c.Close(false)
+			}
 		}
 	}()
 }
@@ -436,14 +467,33 @@ type conn struct {
 	ctx       interface{}
 	detached  bool
 	closed    bool
+	inTx      bool
 	cmds      []Command
 	idleClose time.Duration
 }
 
-func (c *conn) Close() error {
+func (c *conn) InTx() bool {
+	return c.inTx
+}
+
+func (c *conn) SetTxStatus(inTx bool) {
+	c.inTx = inTx
+}
+
+func (c *conn) Close(force bool) (bool, error) {
+	if c.inTx && !force {
+		return false, nil
+	}
+	if c.closed {
+		return true, nil
+	}
 	c.wr.Flush()
+	err := c.conn.Close()
+	if err != nil {
+		return false, err
+	}
 	c.closed = true
-	return c.conn.Close()
+	return true, nil
 }
 func (c *conn) Context() interface{}        { return c.ctx }
 func (c *conn) SetContext(v interface{})    { c.ctx = v }
@@ -1126,7 +1176,7 @@ func (sconn *pubSubConn) bgrunner(ps *PubSub) {
 		delete(ps.conns, sconn.conn)
 		sconn.mu.Lock()
 		defer sconn.mu.Unlock()
-		sconn.dconn.Close()
+		sconn.dconn.Close(true)
 	}()
 	for {
 		cmd, err := sconn.dconn.ReadCommand()
@@ -1172,7 +1222,7 @@ func (sconn *pubSubConn) bgrunner(ps *PubSub) {
 				defer sconn.mu.Unlock()
 				sconn.dconn.WriteString("OK")
 				sconn.dconn.Flush()
-				sconn.dconn.Close()
+				sconn.dconn.Close(true)
 			}()
 			return
 		case "ping":
