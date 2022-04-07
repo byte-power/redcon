@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tidwall/btree"
@@ -113,6 +114,12 @@ type Conn interface {
 	PeekPipeline() []Command
 	// NetConn returns the base net.Conn connection
 	NetConn() net.Conn
+	// Closed returns the connection is closed or not
+	Closed() bool
+	// InTx returns the connection in transaction or not
+	InTx() bool
+	// SetTxStatus set redis transaction status of the connection
+	SetTxStatus(bool)
 }
 
 // NewServer returns a new Redcon server configured on "tcp" network net.
@@ -184,9 +191,28 @@ func NewServerNetworkTLS(
 	return tls
 }
 
-// Close stops listening on the TCP address.
-// Already Accepted connections will be closed.
-func (s *Server) Close() error {
+// Close will close server and all connections.
+// Active connections will be closed after `waitDuration` duration.
+// this function will be blocked for `waitDuration` duration if active connection exists
+func (s *Server) Close(waitDuration time.Duration) (CloseConnsResult, error) {
+	err := s.close()
+	if err != nil {
+		return CloseConnsResult{}, err
+	}
+	if s.OpenConnectionCount() == 0 {
+		return CloseConnsResult{}, nil
+	}
+	time.Sleep(waitDuration)
+	return s.closeAllActiveConnections()
+}
+
+func (s *Server) IsServerClosing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done
+}
+
+func (s *Server) close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ln == nil {
@@ -201,7 +227,7 @@ type CloseConnsResult struct {
 	Count int
 }
 
-func (s *Server) CloseAllActiveConnections() (CloseConnsResult, error) {
+func (s *Server) closeAllActiveConnections() (CloseConnsResult, error) {
 	errs := make([]error, 0)
 	closedCount := 0
 	s.mu.Lock()
@@ -215,15 +241,10 @@ func (s *Server) CloseAllActiveConnections() (CloseConnsResult, error) {
 			errs = append(errs, err)
 		} else if closed {
 			closedCount += 1
+			delete(s.conns, c)
 		}
 	}
 	return CloseConnsResult{Errs: errs, Count: closedCount}, nil
-}
-
-func (s *Server) IsServerClosing() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.done
 }
 
 // ListenAndServe serves incoming connections.
@@ -236,6 +257,12 @@ func (s *Server) Addr() net.Addr {
 	return s.ln.Addr()
 }
 
+func (s *Server) OpenConnectionCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
+}
+
 // Close stops listening on the TCP address.
 // Already Accepted connections will be closed.
 func (s *TLSServer) Close() error {
@@ -246,31 +273,6 @@ func (s *TLSServer) Close() error {
 	}
 	s.done = true
 	return s.ln.Close()
-}
-
-func (s *TLSServer) CloseAllActiveConnections() (CloseConnsResult, error) {
-	errs := make([]error, 0)
-	closedCount := 0
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.done {
-		return CloseConnsResult{}, ErrServerIsNotClosed
-	}
-	for c := range s.conns {
-		closed, err := c.Close(true)
-		if err != nil {
-			errs = append(errs, err)
-		} else if closed {
-			closedCount += 1
-		}
-	}
-	return CloseConnsResult{Errs: errs, Count: closedCount}, nil
-}
-
-func (s *TLSServer) IsServerClosing() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.done
 }
 
 // ListenAndServe serves incoming connections.
@@ -444,24 +446,21 @@ func handle(s *Server, c *conn) {
 		// }
 		func() {
 			// remove the conn from the server
-			if err != nil {
+			if err != nil && err != errDetached {
 				fmt.Printf("handle connection error %+v %s\n", c, err)
-			}
-			closed, closeErr := c.Close(false)
-			if closeErr != nil {
-				fmt.Printf("close connection error %+v %s\n", c, err)
-				return
-			}
-			if closed {
-				s.mu.Lock()
-				defer s.mu.Unlock()
-				delete(s.conns, c)
-				if s.closed != nil {
-					if err == io.EOF {
-						err = nil
-					}
-					s.closed(c, err)
+				_, closeErr := c.Close(true)
+				if closeErr != nil {
+					fmt.Printf("close connection in handle defer error %+v %s\n", c, err)
 				}
+			}
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			delete(s.conns, c)
+			if s.closed != nil {
+				if err == io.EOF {
+					err = nil
+				}
+				s.closed(c, err)
 			}
 		}()
 	}()
@@ -490,14 +489,19 @@ func handle(s *Server, c *conn) {
 				// client has been detached
 				return errDetached
 			}
-			if c.closed {
+			if c.Closed() {
 				return nil
 			}
 			if err := c.wr.Flush(); err != nil {
 				return err
 			}
 			if s.IsServerClosing() {
-				c.Close(false)
+				closed, err := c.Close(false)
+				if err != nil {
+					fmt.Printf("close connection in handler error %+v %s\n", c, err)
+				} else if closed {
+					return nil
+				}
 			}
 		}
 	}()
@@ -511,25 +515,29 @@ type conn struct {
 	addr      string
 	ctx       interface{}
 	detached  bool
-	closed    bool
-	inTx      bool
+	closed    int32 // atmoic access
+	inTx      int32 // atomic access
 	cmds      []Command
 	idleClose time.Duration
 }
 
 func (c *conn) InTx() bool {
-	return c.inTx
+	return atomic.LoadInt32(&c.inTx) == 1
 }
 
 func (c *conn) SetTxStatus(inTx bool) {
-	c.inTx = inTx
+	if inTx {
+		atomic.StoreInt32(&c.inTx, 1)
+	} else {
+		atomic.StoreInt32(&c.inTx, 0)
+	}
 }
 
 func (c *conn) Close(force bool) (bool, error) {
-	if c.inTx && !force {
+	if c.InTx() && !force {
 		return false, nil
 	}
-	if c.closed {
+	if c.Closed() {
 		return true, nil
 	}
 	c.wr.Flush()
@@ -537,7 +545,7 @@ func (c *conn) Close(force bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	c.closed = true
+	atomic.StoreInt32(&c.closed, 1)
 	return true, nil
 }
 func (c *conn) Context() interface{}        { return c.ctx }
@@ -565,6 +573,10 @@ func (c *conn) PeekPipeline() []Command {
 }
 func (c *conn) NetConn() net.Conn {
 	return c.conn
+}
+
+func (c *conn) Closed() bool {
+	return atomic.LoadInt32(&c.closed) == 1
 }
 
 // BaseWriter returns the underlying connection writer, if any
