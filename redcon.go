@@ -23,6 +23,8 @@ var (
 	errDetached               = errors.New("detached")
 	errIncompleteCommand      = errors.New("incomplete command")
 	errTooMuchData            = errors.New("too much data")
+
+	ErrServerIsNotClosed = errors.New("server is not closed yet")
 )
 
 type errProtocol struct {
@@ -194,6 +196,30 @@ func (s *Server) Close() error {
 	return s.ln.Close()
 }
 
+type CloseConnsResult struct {
+	Errs  []error
+	Count int
+}
+
+func (s *Server) CloseAllActiveConnections() (CloseConnsResult, error) {
+	errs := make([]error, 0)
+	closedCount := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.done {
+		return CloseConnsResult{}, ErrServerIsNotClosed
+	}
+	for c := range s.conns {
+		closed, err := c.Close(true)
+		if err != nil {
+			errs = append(errs, err)
+		} else if closed {
+			closedCount += 1
+		}
+	}
+	return CloseConnsResult{Errs: errs, Count: closedCount}, nil
+}
+
 func (s *Server) IsServerClosing() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -220,6 +246,25 @@ func (s *TLSServer) Close() error {
 	}
 	s.done = true
 	return s.ln.Close()
+}
+
+func (s *TLSServer) CloseAllActiveConnections() (CloseConnsResult, error) {
+	errs := make([]error, 0)
+	closedCount := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.done {
+		return CloseConnsResult{}, ErrServerIsNotClosed
+	}
+	for c := range s.conns {
+		closed, err := c.Close(true)
+		if err != nil {
+			errs = append(errs, err)
+		} else if closed {
+			closedCount += 1
+		}
+	}
+	return CloseConnsResult{Errs: errs, Count: closedCount}, nil
 }
 
 func (s *TLSServer) IsServerClosing() bool {
