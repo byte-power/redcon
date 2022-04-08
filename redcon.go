@@ -446,12 +446,12 @@ func handle(s *Server, c *conn) {
 		// }
 		func() {
 			// remove the conn from the server
-			if err != nil && err != errDetached {
+			if err != nil && err != errDetached && err != io.EOF {
 				fmt.Printf("handle connection error %+v %s\n", c, err)
-				_, closeErr := c.Close(true)
-				if closeErr != nil {
-					fmt.Printf("close connection in handle defer error %+v %s\n", c, err)
-				}
+			}
+			_, closeErr := c.Close(true)
+			if closeErr != nil {
+				fmt.Printf("close connection in handle defer error %+v %s\n", c, err)
 			}
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -495,13 +495,8 @@ func handle(s *Server, c *conn) {
 			if err := c.wr.Flush(); err != nil {
 				return err
 			}
-			if s.IsServerClosing() {
-				closed, err := c.Close(false)
-				if err != nil {
-					fmt.Printf("close connection in handler error %+v %s\n", c, err)
-				} else if closed {
-					return nil
-				}
+			if s.IsServerClosing() && !c.InTx() {
+				return nil
 			}
 		}
 	}()
