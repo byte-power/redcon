@@ -442,7 +442,7 @@ func handle(s *Server, c *conn) {
 			_, closeErr := c.Close(true)
 			if closeErr != nil {
 				if logger != nil {
-					logger.Printf("close connection in handle defer error %+v %s\n", c, err)
+					logger.Printf("close connection error in handle defer %+v %s\n", c, err)
 				}
 			}
 		}
@@ -468,7 +468,7 @@ func handle(s *Server, c *conn) {
 			cmds, err := c.rd.readCommands(nil)
 			if err != nil {
 				if logger != nil {
-					logger.Printf("connection reads commands error %s %+v\n", err, c)
+					logger.Printf("connection reads commands error %+v %s\n", c, err)
 				}
 				if err, ok := err.(*errProtocol); ok {
 					// All protocol errors should attempt a response to
@@ -490,7 +490,7 @@ func handle(s *Server, c *conn) {
 			}
 			if err := c.wr.Flush(); err != nil {
 				if logger != nil {
-					logger.Printf("write commands error %s %+v\n", err, c)
+					logger.Printf("connection writes commands error %+v %s\n", c, err)
 				}
 				return err
 			}
