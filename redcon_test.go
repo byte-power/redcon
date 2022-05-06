@@ -16,6 +16,13 @@ import (
 	"time"
 )
 
+func TestMain(m *testing.M) {
+	logger := log.New(os.Stdout, "test redcon ", log.LstdFlags)
+	SetLogger(logger)
+	logger.Println("start to run test main")
+	m.Run()
+}
+
 // TestRandomCommands fills a bunch of random commands and test various
 // ways that the reader may receive data.
 func TestRandomCommands(t *testing.T) {
@@ -232,7 +239,7 @@ func testServerNetwork(t *testing.T, network, laddr string) {
 				conn.WriteString("OK")
 				conn.Close(true)
 			case "detach":
-				testDetached(conn.Detach())
+				go testDetached(conn.Detach())
 			case "int":
 				conn.WriteInt(100)
 			case "bulk":
@@ -595,31 +602,32 @@ func TestPubSub(t *testing.T) {
 			}
 		}()
 		panic(ListenAndServe(addr, func(conn Conn, cmds []Command) {
-			cmd := cmds[0]
-			switch strings.ToLower(string(cmd.Args[0])) {
-			default:
-				conn.WriteError("ERR unknown command '" +
-					string(cmd.Args[0]) + "'")
-			case "publish":
-				if len(cmd.Args) != 3 {
-					conn.WriteError("ERR wrong number of arguments for '" +
-						string(cmd.Args[0]) + "' command")
-					return
-				}
-				count := ps.Publish(string(cmd.Args[1]), string(cmd.Args[2]))
-				conn.WriteInt(count)
-			case "subscribe", "psubscribe":
-				if len(cmd.Args) < 2 {
-					conn.WriteError("ERR wrong number of arguments for '" +
-						string(cmd.Args[0]) + "' command")
-					return
-				}
-				command := strings.ToLower(string(cmd.Args[0]))
-				for i := 1; i < len(cmd.Args); i++ {
-					if command == "psubscribe" {
-						ps.Psubscribe(conn, string(cmd.Args[i]))
-					} else {
-						ps.Subscribe(conn, string(cmd.Args[i]))
+			for _, cmd := range cmds {
+				switch strings.ToLower(string(cmd.Args[0])) {
+				default:
+					conn.WriteError("ERR unknown command '" +
+						string(cmd.Args[0]) + "'")
+				case "publish":
+					if len(cmd.Args) != 3 {
+						conn.WriteError("ERR wrong number of arguments for '" +
+							string(cmd.Args[0]) + "' command")
+						return
+					}
+					count := ps.Publish(string(cmd.Args[1]), string(cmd.Args[2]))
+					conn.WriteInt(count)
+				case "subscribe", "psubscribe":
+					if len(cmd.Args) < 2 {
+						conn.WriteError("ERR wrong number of arguments for '" +
+							string(cmd.Args[0]) + "' command")
+						return
+					}
+					command := strings.ToLower(string(cmd.Args[0]))
+					for i := 1; i < len(cmd.Args); i++ {
+						if command == "psubscribe" {
+							ps.Psubscribe(conn, string(cmd.Args[i]))
+						} else {
+							ps.Subscribe(conn, string(cmd.Args[i]))
+						}
 					}
 				}
 			}

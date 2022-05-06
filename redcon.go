@@ -433,29 +433,29 @@ func serve(s *Server) error {
 func handle(s *Server, c *conn) {
 	var err error
 	defer func() {
-		// if err != errDetached {
-		// 	// do not close the connection when a detach is detected.
-		// 	c.conn.Close()
-		// }
-		func() {
-			// remove the conn from the server
-			if err != nil && err != errDetached && err != io.EOF {
-				fmt.Printf("handle connection error %+v %s\n", c, err)
+		if err != nil && err != errDetached && err != io.EOF {
+			if logger != nil {
+				logger.Printf("handle connection error %+v %s\n", c, err)
 			}
+		}
+		if err != errDetached {
 			_, closeErr := c.Close(true)
 			if closeErr != nil {
-				fmt.Printf("close connection in handle defer error %+v %s\n", c, err)
-			}
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			delete(s.conns, c)
-			if s.closed != nil {
-				if err == io.EOF {
-					err = nil
+				if logger != nil {
+					logger.Printf("close connection in handle defer error %+v %s\n", c, err)
 				}
-				s.closed(c, err)
 			}
-		}()
+		}
+		// remove the conn from the server
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		delete(s.conns, c)
+		if s.closed != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			s.closed(c, err)
+		}
 	}()
 
 	err = func() error {
@@ -468,7 +468,7 @@ func handle(s *Server, c *conn) {
 			cmds, err := c.rd.readCommands(nil)
 			if err != nil {
 				if logger != nil {
-					logger.Printf("read commands error %s %+v\n", err, c)
+					logger.Printf("connection reads commands error %s %+v\n", err, c)
 				}
 				if err, ok := err.(*errProtocol); ok {
 					// All protocol errors should attempt a response to
