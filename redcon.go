@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -27,6 +28,12 @@ var (
 
 	ErrServerIsNotClosed = errors.New("server is not closed yet")
 )
+
+var logger *log.Logger
+
+func SetLogger(log *log.Logger) {
+	logger = log
+}
 
 type errProtocol struct {
 	msg string
@@ -386,32 +393,18 @@ func (s *TLSServer) ListenServeAndSignal(signal chan error) error {
 func serve(s *Server) error {
 	defer func() {
 		s.ln.Close()
-		func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			for c := range s.conns {
-				closed, err := c.Close(false)
-				if err != nil {
-					fmt.Printf("close connection error %+v, %s\n", c, err)
-					continue
-				}
-				if closed {
-					delete(s.conns, c)
-				}
-			}
-		}()
 	}()
 	for {
 		lnconn, err := s.ln.Accept()
 		if err != nil {
+			if s.AcceptError != nil {
+				s.AcceptError(err)
+			}
 			s.mu.Lock()
 			done := s.done
 			s.mu.Unlock()
 			if done {
 				return nil
-			}
-			if s.AcceptError != nil {
-				s.AcceptError(err)
 			}
 			continue
 		}
@@ -474,6 +467,9 @@ func handle(s *Server, c *conn) {
 			}
 			cmds, err := c.rd.readCommands(nil)
 			if err != nil {
+				if logger != nil {
+					logger.Printf("read commands error %s %+v\n", err, c)
+				}
 				if err, ok := err.(*errProtocol); ok {
 					// All protocol errors should attempt a response to
 					// the client. Ignore write errors.
@@ -493,10 +489,16 @@ func handle(s *Server, c *conn) {
 				return nil
 			}
 			if err := c.wr.Flush(); err != nil {
+				if logger != nil {
+					logger.Printf("write commands error %s %+v\n", err, c)
+				}
 				return err
 			}
 			if s.IsServerClosing() && !c.InTx() {
 				return nil
+			}
+			if logger != nil {
+				logger.Printf("continue connection %+v serverStatus %t\n", c, s.IsServerClosing())
 			}
 		}
 	}()
