@@ -29,12 +29,6 @@ var (
 	ErrServerIsNotClosed = errors.New("server is not closed yet")
 )
 
-var logger *log.Logger
-
-func SetLogger(log *log.Logger) {
-	logger = log
-}
-
 type errProtocol struct {
 	msg string
 }
@@ -391,6 +385,7 @@ func (s *TLSServer) ListenServeAndSignal(signal chan error) error {
 }
 
 func serve(s *Server) error {
+	logger := s.Logger()
 	defer func() {
 		err := s.ln.Close()
 		if err != nil {
@@ -436,6 +431,7 @@ func serve(s *Server) error {
 
 // handle manages the server connection.
 func handle(s *Server, c *conn) {
+	logger := s.Logger()
 	var err error
 	defer func() {
 		if err != nil && err != errDetached && err != io.EOF {
@@ -659,6 +655,8 @@ type Server struct {
 	ln        net.Listener
 	done      bool
 	idleClose time.Duration
+
+	logger *log.Logger
 
 	// AcceptError is an optional function used to handle Accept errors.
 	AcceptError func(err error)
@@ -1478,4 +1476,12 @@ func (s *Server) SetIdleClose(dur time.Duration) {
 	s.mu.Lock()
 	s.idleClose = dur
 	s.mu.Unlock()
+}
+
+func (s *Server) SetLogger(logger *log.Logger) {
+	s.logger = logger
+}
+
+func (s *Server) Logger() *log.Logger {
+	return s.logger
 }

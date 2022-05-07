@@ -16,13 +16,6 @@ import (
 	"time"
 )
 
-func TestMain(m *testing.M) {
-	logger := log.New(os.Stdout, "test redcon ", log.LstdFlags)
-	SetLogger(logger)
-	logger.Println("start to run test main")
-	m.Run()
-}
-
 // TestRandomCommands fills a bunch of random commands and test various
 // ways that the reader may receive data.
 func TestRandomCommands(t *testing.T) {
