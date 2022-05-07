@@ -392,7 +392,12 @@ func (s *TLSServer) ListenServeAndSignal(signal chan error) error {
 
 func serve(s *Server) error {
 	defer func() {
-		s.ln.Close()
+		err := s.ln.Close()
+		if err != nil {
+			if logger != nil {
+				fmt.Printf("close listener in serve defer error %s\n", err)
+			}
+		}
 	}()
 	for {
 		lnconn, err := s.ln.Accept()
