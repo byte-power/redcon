@@ -385,13 +385,11 @@ func (s *TLSServer) ListenServeAndSignal(signal chan error) error {
 }
 
 func serve(s *Server) error {
-	logger := s.Logger()
 	defer func() {
 		err := s.ln.Close()
 		if err != nil {
-			if logger != nil {
-				fmt.Printf("close listener in serve defer error %s\n", err)
-			}
+			message := fmt.Sprintf("close listener in serve defer error %s", err)
+			s.LogMessage(message)
 		}
 	}()
 	for {
@@ -431,20 +429,17 @@ func serve(s *Server) error {
 
 // handle manages the server connection.
 func handle(s *Server, c *conn) {
-	logger := s.Logger()
 	var err error
 	defer func() {
 		if err != nil && err != errDetached && err != io.EOF {
-			if logger != nil {
-				logger.Printf("handle connection error %+v %s\n", c, err)
-			}
+			message := fmt.Sprintf("handle connection error %+v %s", c, err)
+			s.LogMessage(message)
 		}
 		if err != errDetached {
 			_, closeErr := c.Close(true)
 			if closeErr != nil {
-				if logger != nil {
-					logger.Printf("close connection error in handle defer %+v %s\n", c, err)
-				}
+				message := fmt.Sprintf("close connection error in handle defer %+v %s", c, err)
+				s.LogMessage(message)
 			}
 		}
 		// remove the conn from the server
@@ -468,9 +463,8 @@ func handle(s *Server, c *conn) {
 			}
 			cmds, err := c.rd.readCommands(nil)
 			if err != nil {
-				if logger != nil {
-					logger.Printf("connection reads commands error %+v %s\n", c, err)
-				}
+				message := fmt.Sprintf("connection reads commands error %+v %s", c, err)
+				s.LogMessage(message)
 				if err, ok := err.(*errProtocol); ok {
 					// All protocol errors should attempt a response to
 					// the client. Ignore write errors.
@@ -490,17 +484,15 @@ func handle(s *Server, c *conn) {
 				return nil
 			}
 			if err := c.wr.Flush(); err != nil {
-				if logger != nil {
-					logger.Printf("connection writes commands error %+v %s\n", c, err)
-				}
+				message := fmt.Sprintf("connection writes commands error %+v %s", c, err)
+				s.LogMessage(message)
 				return err
 			}
 			if s.IsServerClosing() && !c.InTx() {
 				return nil
 			}
-			if logger != nil {
-				logger.Printf("continue connection %+v serverStatus %t\n", c, s.IsServerClosing())
-			}
+			message := fmt.Sprintf("continue connection %+v serverStatus %t", c, s.IsServerClosing())
+			s.LogMessage(message)
 		}
 	}()
 }
@@ -1484,4 +1476,12 @@ func (s *Server) SetLogger(logger *log.Logger) {
 
 func (s *Server) Logger() *log.Logger {
 	return s.logger
+}
+
+func (s *Server) LogMessage(message string) {
+	if s.logger != nil {
+		s.logger.Printf("%s\n", message)
+	} else {
+		fmt.Printf("%s\n", message)
+	}
 }
