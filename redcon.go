@@ -450,8 +450,8 @@ func handle(s *Server, c *conn) {
 		}
 		// remove the conn from the server
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		delete(s.conns, c)
+		s.mu.Unlock()
 		if s.closed != nil {
 			if err == io.EOF {
 				err = nil
