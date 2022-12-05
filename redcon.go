@@ -403,6 +403,7 @@ func serve(s *Server) error {
 			done := s.done
 			s.mu.Unlock()
 			if done {
+				s.LogMessage("server is done")
 				return nil
 			}
 			continue
@@ -413,12 +414,14 @@ func serve(s *Server) error {
 			wr:   NewWriter(lnconn),
 			rd:   NewReader(lnconn),
 		}
+		s.LogMessage(fmt.Sprintf("accept connection %+v", c))
 		s.mu.Lock()
 		c.idleClose = s.idleClose
 		s.conns[c] = true
 		s.mu.Unlock()
-		s.LogMessage(fmt.Sprintf("accept connection %+v", c))
+		s.LogMessage(fmt.Sprintf("add connection to server conns list %+v", c))
 		if s.accept != nil && !s.accept(c) {
+			s.LogMessage(fmt.Sprintf("accept callback error %+v", c))
 			s.mu.Lock()
 			delete(s.conns, c)
 			s.mu.Unlock()
@@ -438,6 +441,7 @@ func handle(s *Server, c *conn) {
 			s.LogMessage(message)
 		}
 		if err != errDetached {
+			s.LogMessage(fmt.Sprintf("close connection %+v %s", c, err))
 			_, closeErr := c.Close(true)
 			if closeErr != nil {
 				message := fmt.Sprintf("close connection error in handle defer %+v %s", c, err)
