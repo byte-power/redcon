@@ -395,6 +395,7 @@ func serve(s *Server) error {
 	for {
 		lnconn, err := s.ln.Accept()
 		if err != nil {
+			s.LogMessage(fmt.Sprintf("accept error %s", err))
 			if s.AcceptError != nil {
 				s.AcceptError(err)
 			}
@@ -416,6 +417,7 @@ func serve(s *Server) error {
 		c.idleClose = s.idleClose
 		s.conns[c] = true
 		s.mu.Unlock()
+		s.LogMessage(fmt.Sprintf("accept connection %+v", c))
 		if s.accept != nil && !s.accept(c) {
 			s.mu.Lock()
 			delete(s.conns, c)
@@ -473,6 +475,7 @@ func handle(s *Server, c *conn) {
 				}
 				return err
 			}
+			s.LogMessage(fmt.Sprintf("handle commands %+v", cmds))
 			if len(cmds) > 0 {
 				s.handler(c, cmds)
 			}
