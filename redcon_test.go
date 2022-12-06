@@ -221,7 +221,8 @@ func TestServerUnix(t *testing.T) {
 
 func testServerNetwork(t *testing.T, network, laddr string) {
 	s := NewServerNetwork(network, laddr,
-		func(conn Conn, cmd Command) {
+		func(conn Conn, cmds []Command) {
+			cmd := cmds[0]
 			switch strings.ToLower(string(cmd.Args[0])) {
 			default:
 				conn.WriteError("ERR unknown command '" + string(cmd.Args[0]) + "'")
@@ -229,7 +230,7 @@ func testServerNetwork(t *testing.T, network, laddr string) {
 				conn.WriteString("PONG")
 			case "quit":
 				conn.WriteString("OK")
-				conn.Close()
+				conn.Close(true)
 			case "detach":
 				go testDetached(conn.Detach())
 			case "int":
@@ -256,21 +257,21 @@ func testServerNetwork(t *testing.T, network, laddr string) {
 			//log.Printf("closed: %s [%v]", conn.RemoteAddr(), err)
 		},
 	)
-	if err := s.Close(); err == nil {
+	if _, err := s.Close(0); err == nil {
 		t.Fatalf("expected an error, should not be able to close before serving")
 	}
 	go func() {
 		time.Sleep(time.Second / 4)
-		if err := ListenAndServeNetwork(network, laddr, func(conn Conn, cmd Command) {}, nil, nil); err == nil {
+		if err := ListenAndServeNetwork(network, laddr, func(conn Conn, cmds []Command) {}, nil, nil); err == nil {
 			panic("expected an error, should not be able to listen on the same port")
 		}
 		time.Sleep(time.Second / 4)
 
-		err := s.Close()
+		_, err := s.Close(0)
 		if err != nil {
 			panic(err)
 		}
-		err = s.Close()
+		_, err = s.Close(0)
 		if err == nil {
 			panic("expected an error")
 		}
@@ -593,31 +594,33 @@ func TestPubSub(t *testing.T) {
 				ps.Publish(channel, message)
 			}
 		}()
-		panic(ListenAndServe(addr, func(conn Conn, cmd Command) {
-			switch strings.ToLower(string(cmd.Args[0])) {
-			default:
-				conn.WriteError("ERR unknown command '" +
-					string(cmd.Args[0]) + "'")
-			case "publish":
-				if len(cmd.Args) != 3 {
-					conn.WriteError("ERR wrong number of arguments for '" +
-						string(cmd.Args[0]) + "' command")
-					return
-				}
-				count := ps.Publish(string(cmd.Args[1]), string(cmd.Args[2]))
-				conn.WriteInt(count)
-			case "subscribe", "psubscribe":
-				if len(cmd.Args) < 2 {
-					conn.WriteError("ERR wrong number of arguments for '" +
-						string(cmd.Args[0]) + "' command")
-					return
-				}
-				command := strings.ToLower(string(cmd.Args[0]))
-				for i := 1; i < len(cmd.Args); i++ {
-					if command == "psubscribe" {
-						ps.Psubscribe(conn, string(cmd.Args[i]))
-					} else {
-						ps.Subscribe(conn, string(cmd.Args[i]))
+		panic(ListenAndServe(addr, func(conn Conn, cmds []Command) {
+			for _, cmd := range cmds {
+				switch strings.ToLower(string(cmd.Args[0])) {
+				default:
+					conn.WriteError("ERR unknown command '" +
+						string(cmd.Args[0]) + "'")
+				case "publish":
+					if len(cmd.Args) != 3 {
+						conn.WriteError("ERR wrong number of arguments for '" +
+							string(cmd.Args[0]) + "' command")
+						return
+					}
+					count := ps.Publish(string(cmd.Args[1]), string(cmd.Args[2]))
+					conn.WriteInt(count)
+				case "subscribe", "psubscribe":
+					if len(cmd.Args) < 2 {
+						conn.WriteError("ERR wrong number of arguments for '" +
+							string(cmd.Args[0]) + "' command")
+						return
+					}
+					command := strings.ToLower(string(cmd.Args[0]))
+					for i := 1; i < len(cmd.Args); i++ {
+						if command == "psubscribe" {
+							ps.Psubscribe(conn, string(cmd.Args[i]))
+						} else {
+							ps.Subscribe(conn, string(cmd.Args[i]))
+						}
 					}
 				}
 			}
