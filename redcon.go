@@ -434,7 +434,9 @@ func handle(s *Server, c *conn) {
 		if err != errDetached {
 			_, closeErr := c.Close(true)
 			if closeErr != nil {
-				message := fmt.Sprintf("close connection error %+v %s", c, err)
+				message := fmt.Sprintf(
+					"close connection error %+v %s %s",
+					c, closeErr, err)
 				s.LogMessage(message)
 			}
 		}
